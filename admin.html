@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS Admin</a></nav></header><main class="container"><div id="loginBox" class="card form"><div class="section-title"><h2>Admin Access</h2><p class="muted">Demo admin panel. Change the credentials in this file before deployment.</p></div><div class="field"><label>Username</label><input id="au"></div><div class="field"><label>Password</label><input id="ap" type="password"></div><button class="btn btn-blue" id="adminLogin">Login</button><div id="adminMsg"></div></div>
+<div id="panel" class="hidden"><div class="section-title"><h2>MBS Admin Dashboard</h2><p class="muted">Manage account applications and approved accounts.</p></div><div class="statgrid"><div class="card stat"><span>Applications</span><strong id="apps">0</strong></div><div class="card stat"><span>Approved</span><strong id="approved">0</strong></div><div class="card stat"><span>Pending</span><strong id="pending">0</strong></div><div class="card stat"><span>Accounts</span><strong id="accounts">0</strong></div></div><br><div class="card"><h3>Account Applications</h3><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>MBS No.</th><th>Type</th><th>Mobile</th><th>Status</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div></div><br><div class="card"><h3>💰 Admin Balance Adjustment</h3>
+<p class="muted">Increase or decrease an approved account balance. Every adjustment is recorded in the transaction history.</p>
+<div class="two">
+<div class="field"><label>MATS Number</label><input id="adjMats" maxlength="4" inputmode="numeric" placeholder="4821"></div>
+<div class="field"><label>Amount (use positive to add, negative to subtract)</label><input id="adjAmount" type="number" step="0.01" placeholder="100"></div>
+</div>
+<div class="field"><label>Reason</label><input id="adjReason" maxlength="100" placeholder="Admin adjustment"></div>
+<button class="btn btn-blue" id="adjustBtn">Adjust Balance</button><div id="adjMsg"></div>
+</div><br><div class="card"><h3>Approved Accounts</h3><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Account</th><th>MBS No.</th><th>Balance</th><th>Actions</th></tr></thead><tbody id="accountRows"></tbody></table></div></div></div></main><footer class="footer">MBS Admin</footer>
+<script type="module">
+import {db,collection,getDocs,addDoc,setDoc,doc,deleteDoc,runTransaction,query,where,serverTimestamp} from "./firebase.js";import {money,esc} from "./app.js";
+const ADMIN_USER="admin",ADMIN_PASS="MBS@1234";
+adminLogin.onclick=()=>{if(au.value===ADMIN_USER&&ap.value===ADMIN_PASS){loginBox.classList.add("hidden");panel.classList.remove("hidden");load()}else adminMsg.innerHTML='<div class="notice danger">Invalid admin credentials.</div>'};
+async function load(){const [as,ac]=await Promise.all([getDocs(collection(db,"accountApplications")),getDocs(collection(db,"accounts"))]);const approved=ac.size;apps.textContent=as.size;accounts.textContent=approved;let p=0;rows.innerHTML="";as.forEach(x=>{const d=x.data();if(d.status==="Pending")p++;rows.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.matsNumber)}</td><td>${esc(d.type)}</td><td>${esc(d.mobile)}</td><td><span class="pill">${esc(d.status)}</span></td><td><div class="actions">${d.status==="Pending"?`<button class="btn btn-green" onclick="approve('${x.id}')">Approve</button>`:""}<button class="btn btn-danger" onclick="removeApp('${x.id}')">Delete</button></div></td></tr>`});pending.textContent=p;approved.textContent=approved;accountRows.innerHTML="";ac.forEach(x=>{const d=x.data();accountRows.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.accountNumber)}</td><td>${esc(d.matsNumber)}</td><td>${money(d.balance)}</td><td><button class="btn btn-danger" onclick="removeAccount('${x.id}')">Delete</button></td></tr>`})}
+window.approve=async id=>{
+  const a=await getDocs(collection(db,"accountApplications"));
+  const snap=a.docs.find(x=>x.id===id);
+  if(!snap)return;
+  const d=snap.data();
+  let accountNumber=prompt("Enter the 9-digit MBS account number for "+(d.name||"this applicant")+":","");
+  if(accountNumber===null)return;
+  accountNumber=accountNumber.trim();
+  if(!/^\d{9}$/.test(accountNumber)){alert("Account number must be exactly 9 digits.");return;}
+  const existing=await getDocs(query(collection(db,"accounts"),where("accountNumber","==",accountNumber)));
+  if(!existing.empty){alert("That 9-digit account number is already assigned. Enter another number.");return;}
+  await setDoc(doc(db,"accounts",id),{...d,accountNumber,status:"Approved",balance:Number(d.initialDeposit||0)});
+  await deleteDoc(doc(db,"accountApplications",id));
+  load();
+};
+window.removeApp=async id=>{if(confirm("Delete this application?")){await deleteDoc(doc(db,"accountApplications",id));load()}};
+window.removeAccount=async id=>{if(confirm("Delete this account?")){await deleteDoc(doc(db,"accounts",id));load()}};
+
+adjustBtn.onclick=async()=>{
+  const mats=adjMats.value.trim(), amount=Number(adjAmount.value), reason=adjReason.value.trim()||"Admin adjustment";
+  adjMsg.textContent="Processing…";
+  if(!/^\d{4}$/.test(mats)||!Number.isFinite(amount)||amount===0){adjMsg.innerHTML='<div class="notice danger">Enter a valid MATS Number and non-zero amount.</div>';return}
+  try{
+    const qs=query(collection(db,"accounts"),where("matsNumber","==",mats));
+    const s=await getDocs(qs);
+    if(s.empty){adjMsg.innerHTML='<div class="notice danger">Account not found.</div>';return}
+    const account=s.docs[0], id=account.id;
+    await runTransaction(db,async tx=>{
+      const ref=doc(db,"accounts",id), snap=await tx.get(ref);
+      if(!snap.exists())throw new Error("missing");
+      const old=Number(snap.data().balance||0), next=old+amount;
+      if(next<0)throw new Error("negative");
+      tx.update(ref,{balance:next});
+      const tr=doc(collection(db,"transactions"));
+      tx.set(tr,{type:"Admin Adjustment",accountId:id,matsNumber:mats,amount,reason,createdAt:serverTimestamp()});
+    });
+    adjMsg.innerHTML='<div class="notice success">Balance adjusted successfully.</div>';adjAmount.value="";adjReason.value="";load();
+  }catch(e){adjMsg.innerHTML='<div class="notice danger">'+(e.message==="negative"?"Balance cannot become negative.":"Adjustment failed. Check Firestore rules.")+'</div>'}
+};
+</script></body></html>

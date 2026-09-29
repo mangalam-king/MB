@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Account — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a><div class="navlinks"><a href="index.html">Home</a><a href="login.html">Login</a></div></nav></header>
+<main class="container"><div class="section-title"><h2>Open an MBS Account</h2><p class="muted">Fill in the details below.</p></div><form id="accountForm" class="card form">
+<div class="two"><div class="field"><label>Full Name</label><input id="name" required></div><div class="field"><label>Date of Birth</label><input id="dob" type="date" required></div></div>
+<div class="two"><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" required></div><div class="field"><label>Email</label><input id="email" type="email"></div></div>
+<div class="field"><label>Account Type</label><select id="type"><option>Savings</option><option>Minor Savings</option></select></div>
+<div class="field"><label>Address</label><textarea id="address" required></textarea></div>
+<div class="field"><label>Parent/Guardian Name (if applicable)</label><input id="guardian"></div>
+<div class="field"><label>Initial Deposit</label><select id="deposit"><option value="10">₹10</option><option value="20">₹20</option><option value="50">₹50</option><option value="0">No initial deposit</option></select></div>
+<div class="notice">MBS Number will be generated automatically. Your 9-digit account number will be assigned by the MBS admin after approval. PAN/Aadhaar is not collected in this demo.</div>
+<button class="btn btn-blue" type="submit">Submit Application</button><div id="msg"></div></form></main>
+<footer class="footer">MBS — Mats Banks</footer>
+<script type="module">
+import {db,collection,addDoc,serverTimestamp} from "./firebase.js";
+import {makeMatsNumber} from "./app.js";
+document.querySelector("#accountForm").addEventListener("submit",async e=>{e.preventDefault();let msg=document.querySelector("#msg");msg.innerHTML="Submitting…";
+try{const data={name:name.value.trim(),dob:dob.value,mobile:mobile.value.trim(),email:email.value.trim(),type:type.value,address:address.value.trim(),guardian:guardian.value.trim(),initialDeposit:Number(deposit.value),matsNumber:makeMatsNumber(),status:"Pending",balance:0,createdAt:serverTimestamp()};
+await addDoc(collection(db,"accountApplications"),data);msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MBS Number: <b>'+data.matsNumber+'</b>. Admin approval is required.</div>';e.target.reset()}catch(err){msg.innerHTML='<div class="notice danger">Could not submit. Check Firebase configuration and Firestore rules.</div>';console.error(err)}})
+</script></body></html>

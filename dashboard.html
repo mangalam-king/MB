@@ -1,0 +1,109 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MPS Payments — MBS</title><link rel="stylesheet" href="style.css"></head><body>
+<header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a>
+<div class="navlinks"><a href="index.html">Home</a><a href="#" id="logout">Logout</a></div></nav></header>
+<main class="container"><div id="app"></div></main><footer class="footer">MBS — Mats Banks · MPS Payment System<br><span class="small">Educational/demo payment system. Not a real payment service.</span></footer>
+
+<script type="module">
+import {getUser,logout,money,esc} from "./app.js";
+import {db,doc,getDoc,collection,getDocs,query,where,orderBy,runTransaction,addDoc,serverTimestamp} from "./firebase.js";
+
+let u=getUser();
+if(!u) location.href="login.html";
+else load();
+
+async function load(){
+  const snap=await getDoc(doc(db,"accounts",u.id));
+  if(!snap.exists()){localStorage.removeItem("mbsUser");location.href="login.html";return;}
+  u={id:snap.id,...snap.data()};
+  localStorage.setItem("mbsUser",JSON.stringify(u));
+  render();
+  await loadHistory();
+}
+function render(){
+  app.innerHTML=`
+  <div class="account-preview">
+    <span class="pill">MPS WALLET</span><h2>${esc(u.name)}</h2>
+    <div class="account-no">${esc(u.accountNumber)}</div>
+    <p>MATS Number: <b>${esc(u.matsNumber)}</b></p>
+    <h3>Available Balance: ${money(u.balance)}</h3>
+  </div>
+  <div class="grid">
+    <div class="card"><h3>💸 Send Money</h3>
+      <p class="muted">Send money directly to another approved MBS account.</p>
+      <div class="field"><label>Receiver MATS Number</label><input id="receiver" maxlength="4" inputmode="numeric" placeholder="e.g. 4821"></div>
+      <div class="field"><label>Amount</label><input id="sendAmount" type="number" min="1" step="0.01" placeholder="₹"></div>
+      <div class="field"><label>Note (optional)</label><input id="note" maxlength="80" placeholder="Payment note"></div>
+      <button class="btn btn-blue" id="sendBtn">Send Money</button><div id="sendMsg"></div>
+    </div>
+    <div class="card"><h3>💰 Add Deposit</h3>
+      <p class="muted">Record a demo deposit through MPS.</p>
+      <div class="field"><label>Amount</label><select id="depositAmount"><option value="10">₹10</option><option value="20">₹20</option><option value="50">₹50</option><option value="100">₹100</option></select></div>
+      <button class="btn btn-green" id="depositBtn">Add Money</button><div id="depMsg"></div>
+    </div>
+    <div class="card"><h3>🔐 Payment Safety</h3><p class="muted">Transfers are processed as one Firestore transaction: the sender is debited and the receiver is credited together.</p><p class="small">Never use real bank credentials or real money with this demo.</p></div>
+  </div>
+  <br><div class="card"><h3>Transaction History</h3><div class="table-wrap"><table class="table">
+  <thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Amount</th></tr></thead><tbody id="history"></tbody></table></div></div>`;
+  sendBtn.onclick=sendMoney; depositBtn.onclick=deposit; logout.onclick=e=>{e.preventDefault();logout()};
+}
+async function sendMoney(){
+  const mats=receiver.value.trim(), amount=Number(sendAmount.value), memo=note.value.trim();
+  sendMsg.textContent="Processing…";
+  if(!/^\d{4}$/.test(mats)){sendMsg.innerHTML='<div class="notice danger">Enter a valid 4-digit receiver MATS Number.</div>';return}
+  if(!Number.isFinite(amount)||amount<=0){sendMsg.innerHTML='<div class="notice danger">Enter a valid amount.</div>';return}
+  if(amount>Number(u.balance||0)){sendMsg.innerHTML='<div class="notice danger">Insufficient balance.</div>';return}
+  if(mats===u.matsNumber){sendMsg.innerHTML='<div class="notice danger">You cannot send money to your own account.</div>';return}
+  try{
+    const qs=query(collection(db,"accounts"),where("matsNumber","==",mats));
+    const rs=await getDocs(qs);
+    if(rs.empty){sendMsg.innerHTML='<div class="notice danger">Receiver account not found.</div>';return}
+    const rdoc=rs.docs[0], r={id:rdoc.id,...rdoc.data()};
+    if(r.status!=="Approved"){sendMsg.innerHTML='<div class="notice danger">Receiver is not an approved account.</div>';return}
+    await runTransaction(db, async tx=>{
+      const senderRef=doc(db,"accounts",u.id), receiverRef=doc(db,"accounts",r.id);
+      const senderSnap=await tx.get(senderRef), receiverSnap=await tx.get(receiverRef);
+      if(!senderSnap.exists()||!receiverSnap.exists()) throw new Error("Account missing");
+      const sb=Number(senderSnap.data().balance||0);
+      const rb=Number(receiverSnap.data().balance||0);
+      if(sb<amount) throw new Error("INSUFFICIENT");
+      tx.update(senderRef,{balance:sb-amount});
+      tx.update(receiverRef,{balance:rb+amount});
+      const txRef=doc(collection(db,"transactions"));
+      tx.set(txRef,{type:"Transfer",fromAccountId:u.id,fromMatsNumber:u.matsNumber,fromName:u.name,toAccountId:r.id,toMatsNumber:r.matsNumber,toName:r.name,amount,note:memo,createdAt:serverTimestamp()});
+    });
+    sendMsg.innerHTML='<div class="notice success">Payment sent successfully to MATS '+esc(mats)+'.</div>';
+    sendAmount.value="";receiver.value="";note.value="";
+    await load();
+  }catch(e){console.error(e);sendMsg.innerHTML='<div class="notice danger">'+(e.message==="INSUFFICIENT"?"Insufficient balance.":"Payment failed. Check Firestore rules.")+'</div>'}
+}
+async function deposit(){
+  const amount=Number(depositAmount.value);depMsg.textContent="Processing…";
+  try{
+    await runTransaction(db,async tx=>{
+      const ref=doc(db,"accounts",u.id), snap=await tx.get(ref);
+      if(!snap.exists())throw new Error("Account missing");
+      const b=Number(snap.data().balance||0);
+      tx.update(ref,{balance:b+amount});
+      const tr=doc(collection(db,"transactions"));
+      tx.set(tr,{type:"Deposit",accountId:u.id,matsNumber:u.matsNumber,amount,source:"MPS demo deposit",createdAt:serverTimestamp()});
+    });
+    depMsg.innerHTML='<div class="notice success">₹'+amount.toFixed(2)+' added successfully.</div>';
+    await load();
+  }catch(e){depMsg.innerHTML='<div class="notice danger">Could not add money.</div>'}
+}
+async function loadHistory(){
+  try{
+    const q=query(collection(db,"transactions"),where("accountId","==",u.id));
+    const s=await getDocs(q);
+    const arr=s.docs.map(x=>({id:x.id,...x.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    history.innerHTML=arr.map(t=>{
+      const outgoing=t.type==="Transfer"&&t.fromAccountId===u.id;
+      const incoming=t.type==="Transfer"&&t.toAccountId===u.id;
+      const label=outgoing?"Sent to "+esc(t.toMatsNumber):incoming?"Received from "+esc(t.fromMatsNumber):"Deposit";
+      const sign=outgoing?"−":incoming?"+":"+";
+      return `<tr><td>${t.createdAt?.toDate?t.createdAt.toDate().toLocaleString():"Just now"}</td><td>${esc(t.type)}</td><td>${label}${t.note?" · "+esc(t.note):""}</td><td><b>${sign}${money(t.amount)}</b></td></tr>`;
+    }).join("")||'<tr><td colspan="4">No transactions yet.</td></tr>';
+  }catch(e){history.innerHTML='<tr><td colspan="4">Transaction history unavailable.</td></tr>'}
+}
+</script></body></html>
