@@ -1,4 +1,3 @@
-export function makeAccountNumber(){return "MBS"+Math.floor(10000000+Math.random()*90000000)}
 export function makeMatsNumber(){return String(Math.floor(1000+Math.random()*9000))}
 export function money(n){return "₹"+Number(n||0).toFixed(2)}
 export function setUser(u){localStorage.setItem("mbsUser",JSON.stringify(u))}

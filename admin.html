@@ -9,47 +9,88 @@
 <button class="btn btn-blue" id="adjustBtn">Adjust Balance</button><div id="adjMsg"></div>
 </div><br><div class="card"><h3>Approved Accounts</h3><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Account</th><th>MBS No.</th><th>Balance</th><th>Actions</th></tr></thead><tbody id="accountRows"></tbody></table></div></div></div></main><footer class="footer">MBS Admin</footer>
 <script type="module">
-import {db,collection,getDocs,addDoc,setDoc,doc,deleteDoc,runTransaction,query,where,serverTimestamp} from "./firebase.js";import {money,esc} from "./app.js";
-const ADMIN_USER="admin",ADMIN_PASS="MBS@1234";
-adminLogin.onclick=()=>{if(au.value===ADMIN_USER&&ap.value===ADMIN_PASS){loginBox.classList.add("hidden");panel.classList.remove("hidden");load()}else adminMsg.innerHTML='<div class="notice danger">Invalid admin credentials.</div>'};
-async function load(){const [as,ac]=await Promise.all([getDocs(collection(db,"accountApplications")),getDocs(collection(db,"accounts"))]);const approved=ac.size;apps.textContent=as.size;accounts.textContent=approved;let p=0;rows.innerHTML="";as.forEach(x=>{const d=x.data();if(d.status==="Pending")p++;rows.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.matsNumber)}</td><td>${esc(d.type)}</td><td>${esc(d.mobile)}</td><td><span class="pill">${esc(d.status)}</span></td><td><div class="actions">${d.status==="Pending"?`<button class="btn btn-green" onclick="approve('${x.id}')">Approve</button>`:""}<button class="btn btn-danger" onclick="removeApp('${x.id}')">Delete</button></div></td></tr>`});pending.textContent=p;approved.textContent=approved;accountRows.innerHTML="";ac.forEach(x=>{const d=x.data();accountRows.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.accountNumber)}</td><td>${esc(d.matsNumber)}</td><td>${money(d.balance)}</td><td><button class="btn btn-danger" onclick="removeAccount('${x.id}')">Delete</button></td></tr>`})}
-window.approve=async id=>{
-  const a=await getDocs(collection(db,"accountApplications"));
-  const snap=a.docs.find(x=>x.id===id);
-  if(!snap)return;
-  const d=snap.data();
-  let accountNumber=prompt("Enter the 9-digit MBS account number for "+(d.name||"this applicant")+":","");
-  if(accountNumber===null)return;
-  accountNumber=accountNumber.trim();
-  if(!/^\d{9}$/.test(accountNumber)){alert("Account number must be exactly 9 digits.");return;}
-  const existing=await getDocs(query(collection(db,"accounts"),where("accountNumber","==",accountNumber)));
-  if(!existing.empty){alert("That 9-digit account number is already assigned. Enter another number.");return;}
-  await setDoc(doc(db,"accounts",id),{...d,accountNumber,status:"Approved",balance:Number(d.initialDeposit||0)});
-  await deleteDoc(doc(db,"accountApplications",id));
-  load();
-};
-window.removeApp=async id=>{if(confirm("Delete this application?")){await deleteDoc(doc(db,"accountApplications",id));load()}};
-window.removeAccount=async id=>{if(confirm("Delete this account?")){await deleteDoc(doc(db,"accounts",id));load()}};
+import {db,collection,getDocs,setDoc,doc,deleteDoc,runTransaction,query,where,serverTimestamp} from "./firebase.js";
+import {money,esc} from "./app.js";
 
-adjustBtn.onclick=async()=>{
-  const mats=adjMats.value.trim(), amount=Number(adjAmount.value), reason=adjReason.value.trim()||"Admin adjustment";
-  adjMsg.textContent="Processing…";
-  if(!/^\d{4}$/.test(mats)||!Number.isFinite(amount)||amount===0){adjMsg.innerHTML='<div class="notice danger">Enter a valid MATS Number and non-zero amount.</div>';return}
+const ADMIN_USER="admin", ADMIN_PASS="MBS@1234";
+const loginBoxEl=document.getElementById("loginBox");
+const panelEl=document.getElementById("panel");
+const auEl=document.getElementById("au");
+const apEl=document.getElementById("ap");
+const adminLoginEl=document.getElementById("adminLogin");
+const adminMsgEl=document.getElementById("adminMsg");
+const appsEl=document.getElementById("apps");
+const approvedEl=document.getElementById("approved");
+const pendingEl=document.getElementById("pending");
+const accountsEl=document.getElementById("accounts");
+const rowsEl=document.getElementById("rows");
+const accountRowsEl=document.getElementById("accountRows");
+const adjMatsEl=document.getElementById("adjMats");
+const adjAmountEl=document.getElementById("adjAmount");
+const adjReasonEl=document.getElementById("adjReason");
+const adjustBtnEl=document.getElementById("adjustBtn");
+const adjMsgEl=document.getElementById("adjMsg");
+
+adminLoginEl.addEventListener("click",()=>{
+  if(auEl.value===ADMIN_USER && apEl.value===ADMIN_PASS){
+    loginBoxEl.classList.add("hidden"); panelEl.classList.remove("hidden"); load();
+  }else adminMsgEl.innerHTML='<div class="notice danger">Invalid admin credentials.</div>';
+});
+
+async function load(){
   try{
-    const qs=query(collection(db,"accounts"),where("matsNumber","==",mats));
-    const s=await getDocs(qs);
-    if(s.empty){adjMsg.innerHTML='<div class="notice danger">Account not found.</div>';return}
+    const [as,ac]=await Promise.all([getDocs(collection(db,"accountApplications")),getDocs(collection(db,"accounts"))]);
+    appsEl.textContent=as.size;
+    accountsEl.textContent=ac.size;
+    approvedEl.textContent=ac.size;
+    let p=0; rowsEl.innerHTML="";
+    as.forEach(x=>{
+      const d=x.data(); if(d.status==="Pending") p++;
+      rowsEl.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.matsNumber)}</td><td>${esc(d.type)}</td><td>${esc(d.mobile)}</td><td><span class="pill">${esc(d.status)}</span></td><td><div class="actions">${d.status==="Pending"?`<button class="btn btn-green" onclick="approve('${x.id}')">Approve</button>`:""}<button class="btn btn-danger" onclick="removeApp('${x.id}')">Delete</button></div></td></tr>`;
+    });
+    pendingEl.textContent=p;
+    accountRowsEl.innerHTML="";
+    ac.forEach(x=>{const d=x.data(); accountRowsEl.innerHTML+=`<tr><td>${esc(d.name)}</td><td>${esc(d.accountNumber)}</td><td>${esc(d.matsNumber)}</td><td>${money(d.balance)}</td><td><button class="btn btn-danger" onclick="removeAccount('${x.id}')">Delete</button></td></tr>`;});
+  }catch(err){
+    console.error(err);
+    adminMsgEl.innerHTML='<div class="notice danger">Could not load data: '+(err?.code||"Firebase error")+'. Check Firestore rules.</div>';
+  }
+}
+
+window.approve=async id=>{
+  try{
+    const snap=await getDocs(collection(db,"accountApplications"));
+    const found=snap.docs.find(x=>x.id===id); if(!found)return;
+    const d=found.data();
+    let accountNumber=prompt("Enter the 9-digit MBS account number for "+(d.name||"this applicant")+":","");
+    if(accountNumber===null)return;
+    accountNumber=accountNumber.trim();
+    if(!/^\d{9}$/.test(accountNumber)){alert("Account number must be exactly 9 digits.");return;}
+    const existing=await getDocs(query(collection(db,"accounts"),where("accountNumber","==",accountNumber)));
+    if(!existing.empty){alert("That 9-digit account number is already assigned. Enter another number.");return;}
+    await setDoc(doc(db,"accounts",id),{...d,accountNumber,status:"Approved",balance:Number(d.initialDeposit||0),approvedAt:serverTimestamp()});
+    await deleteDoc(doc(db,"accountApplications",id));
+    await load();
+  }catch(err){alert("Approval failed: "+(err?.code||err?.message||"Firebase error")+". Check Firestore rules.");console.error(err);}
+};
+window.removeApp=async id=>{if(confirm("Delete this application?")){try{await deleteDoc(doc(db,"accountApplications",id));await load();}catch(e){alert("Delete failed: "+(e?.code||"Firebase error"));}}};
+window.removeAccount=async id=>{if(confirm("Delete this account?")){try{await deleteDoc(doc(db,"accounts",id));await load();}catch(e){alert("Delete failed: "+(e?.code||"Firebase error"));}}};
+
+adjustBtnEl.addEventListener("click",async()=>{
+  const mats=adjMatsEl.value.trim(), amount=Number(adjAmountEl.value), reason=adjReasonEl.value.trim()||"Admin adjustment";
+  adjMsgEl.textContent="Processing…";
+  if(!/^\d{4}$/.test(mats)||!Number.isFinite(amount)||amount===0){adjMsgEl.innerHTML='<div class="notice danger">Enter a valid MATS Number and non-zero amount.</div>';return;}
+  try{
+    const qs=query(collection(db,"accounts"),where("matsNumber","==",mats)); const s=await getDocs(qs);
+    if(s.empty){adjMsgEl.innerHTML='<div class="notice danger">Account not found.</div>';return;}
     const account=s.docs[0], id=account.id;
     await runTransaction(db,async tx=>{
-      const ref=doc(db,"accounts",id), snap=await tx.get(ref);
-      if(!snap.exists())throw new Error("missing");
-      const old=Number(snap.data().balance||0), next=old+amount;
-      if(next<0)throw new Error("negative");
+      const ref=doc(db,"accounts",id), snap=await tx.get(ref); if(!snap.exists())throw new Error("missing");
+      const old=Number(snap.data().balance||0), next=old+amount; if(next<0)throw new Error("negative");
       tx.update(ref,{balance:next});
-      const tr=doc(collection(db,"transactions"));
-      tx.set(tr,{type:"Admin Adjustment",accountId:id,matsNumber:mats,amount,reason,createdAt:serverTimestamp()});
+      const tr=doc(collection(db,"transactions")); tx.set(tr,{type:"Admin Adjustment",accountId:id,matsNumber:mats,amount,reason,createdAt:serverTimestamp()});
     });
-    adjMsg.innerHTML='<div class="notice success">Balance adjusted successfully.</div>';adjAmount.value="";adjReason.value="";load();
-  }catch(e){adjMsg.innerHTML='<div class="notice danger">'+(e.message==="negative"?"Balance cannot become negative.":"Adjustment failed. Check Firestore rules.")+'</div>'}
-};
+    adjMsgEl.innerHTML='<div class="notice success">Balance adjusted successfully.</div>'; adjAmountEl.value=""; adjReasonEl.value=""; await load();
+  }catch(e){adjMsgEl.innerHTML='<div class="notice danger">'+(e.message==="negative"?"Balance cannot become negative.":"Adjustment failed. Check Firestore rules.")+'</div>';console.error(e);}
+});
 </script></body></html>

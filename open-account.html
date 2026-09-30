@@ -12,7 +12,48 @@
 <script type="module">
 import {db,collection,addDoc,serverTimestamp} from "./firebase.js";
 import {makeMatsNumber} from "./app.js";
-document.querySelector("#accountForm").addEventListener("submit",async e=>{e.preventDefault();let msg=document.querySelector("#msg");msg.innerHTML="Submitting…";
-try{const data={name:name.value.trim(),dob:dob.value,mobile:mobile.value.trim(),email:email.value.trim(),type:type.value,address:address.value.trim(),guardian:guardian.value.trim(),initialDeposit:Number(deposit.value),matsNumber:makeMatsNumber(),status:"Pending",balance:0,createdAt:serverTimestamp()};
-await addDoc(collection(db,"accountApplications"),data);msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MBS Number: <b>'+data.matsNumber+'</b>. Admin approval is required.</div>';e.target.reset()}catch(err){msg.innerHTML='<div class="notice danger">Could not submit. Check Firebase configuration and Firestore rules.</div>';console.error(err)}})
+
+const form=document.getElementById("accountForm");
+const msg=document.getElementById("msg");
+
+form.addEventListener("submit",async e=>{
+  e.preventDefault();
+  msg.innerHTML="<div class=\"notice\">Submitting…</div>";
+  const nameEl=document.getElementById("name");
+  const dobEl=document.getElementById("dob");
+  const mobileEl=document.getElementById("mobile");
+  const emailEl=document.getElementById("email");
+  const typeEl=document.getElementById("type");
+  const addressEl=document.getElementById("address");
+  const guardianEl=document.getElementById("guardian");
+  const depositEl=document.getElementById("deposit");
+  try{
+    const data={
+      name:nameEl.value.trim(),
+      dob:dobEl.value,
+      mobile:mobileEl.value.trim(),
+      email:emailEl.value.trim(),
+      type:typeEl.value,
+      address:addressEl.value.trim(),
+      guardian:guardianEl.value.trim(),
+      initialDeposit:Number(depositEl.value),
+      matsNumber:makeMatsNumber(),
+      status:"Pending",
+      balance:0,
+      createdAt:serverTimestamp()
+    };
+    if(!data.name||!data.dob||!data.mobile||!data.address){
+      msg.innerHTML='<div class="notice danger">Please fill all required fields.</div>';
+      return;
+    }
+    await addDoc(collection(db,"accountApplications"),data);
+    msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MATS Number: <b>'+data.matsNumber+'</b>. Admin approval is required. The 9-digit account number will be assigned by the admin.</div>';
+    form.reset();
+  }catch(err){
+    console.error("MBS application error:",err);
+    const code=err?.code||"unknown";
+    const detail=err?.message||"Unknown Firebase error";
+    msg.innerHTML='<div class="notice danger"><b>Could not submit.</b><br>Firebase error: '+code+'<br><span class="small">'+detail.replace(/[<>]/g,"")+'</span><br><br>Make sure Cloud Firestore is created and the current firestore.rules are published.</div>';
+  }
+});
 </script></body></html>

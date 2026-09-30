@@ -8,6 +8,8 @@
 import {getUser,logout,money,esc} from "./app.js";
 import {db,doc,getDoc,collection,getDocs,query,where,orderBy,runTransaction,addDoc,serverTimestamp} from "./firebase.js";
 
+const appEl=document.getElementById("app");
+const logoutLink=document.getElementById("logout");
 let u=getUser();
 if(!u) location.href="login.html";
 else load();
@@ -21,7 +23,7 @@ async function load(){
   await loadHistory();
 }
 function render(){
-  app.innerHTML=`
+  appEl.innerHTML=`
   <div class="account-preview">
     <span class="pill">MPS WALLET</span><h2>${esc(u.name)}</h2>
     <div class="account-no">${esc(u.accountNumber)}</div>
@@ -45,21 +47,27 @@ function render(){
   </div>
   <br><div class="card"><h3>Transaction History</h3><div class="table-wrap"><table class="table">
   <thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Amount</th></tr></thead><tbody id="history"></tbody></table></div></div>`;
-  sendBtn.onclick=sendMoney; depositBtn.onclick=deposit; logout.onclick=e=>{e.preventDefault();logout()};
+  const sendBtnEl=document.getElementById("sendBtn");
+  const depositBtnEl=document.getElementById("depositBtn");
+  sendBtnEl.onclick=sendMoney; depositBtnEl.onclick=deposit; logoutLink.onclick=e=>{e.preventDefault();logout()};
 }
 async function sendMoney(){
-  const mats=receiver.value.trim(), amount=Number(sendAmount.value), memo=note.value.trim();
-  sendMsg.textContent="Processing…";
-  if(!/^\d{4}$/.test(mats)){sendMsg.innerHTML='<div class="notice danger">Enter a valid 4-digit receiver MATS Number.</div>';return}
-  if(!Number.isFinite(amount)||amount<=0){sendMsg.innerHTML='<div class="notice danger">Enter a valid amount.</div>';return}
-  if(amount>Number(u.balance||0)){sendMsg.innerHTML='<div class="notice danger">Insufficient balance.</div>';return}
-  if(mats===u.matsNumber){sendMsg.innerHTML='<div class="notice danger">You cannot send money to your own account.</div>';return}
+  const receiverEl=document.getElementById("receiver");
+  const sendAmountEl=document.getElementById("sendAmount");
+  const noteEl=document.getElementById("note");
+  const sendMsgEl=document.getElementById("sendMsg");
+  const mats=receiverEl.value.trim(), amount=Number(sendAmountEl.value), memo=noteEl.value.trim();
+  sendMsgEl.textContent="Processing…";
+  if(!/^\d{4}$/.test(mats)){sendMsgEl.innerHTML='<div class="notice danger">Enter a valid 4-digit receiver MATS Number.</div>';return}
+  if(!Number.isFinite(amount)||amount<=0){sendMsgEl.innerHTML='<div class="notice danger">Enter a valid amount.</div>';return}
+  if(amount>Number(u.balance||0)){sendMsgEl.innerHTML='<div class="notice danger">Insufficient balance.</div>';return}
+  if(mats===u.matsNumber){sendMsgEl.innerHTML='<div class="notice danger">You cannot send money to your own account.</div>';return}
   try{
     const qs=query(collection(db,"accounts"),where("matsNumber","==",mats));
     const rs=await getDocs(qs);
-    if(rs.empty){sendMsg.innerHTML='<div class="notice danger">Receiver account not found.</div>';return}
+    if(rs.empty){sendMsgEl.innerHTML='<div class="notice danger">Receiver account not found.</div>';return}
     const rdoc=rs.docs[0], r={id:rdoc.id,...rdoc.data()};
-    if(r.status!=="Approved"){sendMsg.innerHTML='<div class="notice danger">Receiver is not an approved account.</div>';return}
+    if(r.status!=="Approved"){sendMsgEl.innerHTML='<div class="notice danger">Receiver is not an approved account.</div>';return}
     await runTransaction(db, async tx=>{
       const senderRef=doc(db,"accounts",u.id), receiverRef=doc(db,"accounts",r.id);
       const senderSnap=await tx.get(senderRef), receiverSnap=await tx.get(receiverRef);
@@ -72,13 +80,15 @@ async function sendMoney(){
       const txRef=doc(collection(db,"transactions"));
       tx.set(txRef,{type:"Transfer",fromAccountId:u.id,fromMatsNumber:u.matsNumber,fromName:u.name,toAccountId:r.id,toMatsNumber:r.matsNumber,toName:r.name,amount,note:memo,createdAt:serverTimestamp()});
     });
-    sendMsg.innerHTML='<div class="notice success">Payment sent successfully to MATS '+esc(mats)+'.</div>';
-    sendAmount.value="";receiver.value="";note.value="";
+    sendMsgEl.innerHTML='<div class="notice success">Payment sent successfully to MATS '+esc(mats)+'.</div>';
+    sendAmountEl.value="";receiverEl.value="";noteEl.value="";
     await load();
-  }catch(e){console.error(e);sendMsg.innerHTML='<div class="notice danger">'+(e.message==="INSUFFICIENT"?"Insufficient balance.":"Payment failed. Check Firestore rules.")+'</div>'}
+  }catch(e){console.error(e);sendMsgEl.innerHTML='<div class="notice danger">'+(e.message==="INSUFFICIENT"?"Insufficient balance.":"Payment failed. Check Firestore rules.")+'</div>'}
 }
 async function deposit(){
-  const amount=Number(depositAmount.value);depMsg.textContent="Processing…";
+  const depositAmountEl=document.getElementById("depositAmount");
+  const depMsgEl=document.getElementById("depMsg");
+  const amount=Number(depositAmountEl.value);depMsgEl.textContent="Processing…";
   try{
     await runTransaction(db,async tx=>{
       const ref=doc(db,"accounts",u.id), snap=await tx.get(ref);
@@ -88,22 +98,22 @@ async function deposit(){
       const tr=doc(collection(db,"transactions"));
       tx.set(tr,{type:"Deposit",accountId:u.id,matsNumber:u.matsNumber,amount,source:"MPS demo deposit",createdAt:serverTimestamp()});
     });
-    depMsg.innerHTML='<div class="notice success">₹'+amount.toFixed(2)+' added successfully.</div>';
+    depMsgEl.innerHTML='<div class="notice success">₹'+amount.toFixed(2)+' added successfully.</div>';
     await load();
-  }catch(e){depMsg.innerHTML='<div class="notice danger">Could not add money.</div>'}
+  }catch(e){depMsgEl.innerHTML='<div class="notice danger">Could not add money.</div>'}
 }
 async function loadHistory(){
   try{
     const q=query(collection(db,"transactions"),where("accountId","==",u.id));
     const s=await getDocs(q);
     const arr=s.docs.map(x=>({id:x.id,...x.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    history.innerHTML=arr.map(t=>{
+    document.getElementById("history").innerHTML=arr.map(t=>{
       const outgoing=t.type==="Transfer"&&t.fromAccountId===u.id;
       const incoming=t.type==="Transfer"&&t.toAccountId===u.id;
       const label=outgoing?"Sent to "+esc(t.toMatsNumber):incoming?"Received from "+esc(t.fromMatsNumber):"Deposit";
       const sign=outgoing?"−":incoming?"+":"+";
       return `<tr><td>${t.createdAt?.toDate?t.createdAt.toDate().toLocaleString():"Just now"}</td><td>${esc(t.type)}</td><td>${label}${t.note?" · "+esc(t.note):""}</td><td><b>${sign}${money(t.amount)}</b></td></tr>`;
     }).join("")||'<tr><td colspan="4">No transactions yet.</td></tr>';
-  }catch(e){history.innerHTML='<tr><td colspan="4">Transaction history unavailable.</td></tr>'}
+  }catch(e){document.getElementById("history").innerHTML='<tr><td colspan="4">Transaction history unavailable.</td></tr>'}
 }
 </script></body></html>
