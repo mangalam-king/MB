@@ -25,3 +25,12 @@ This project is a demo/educational banking interface and is not a real bank or p
 - Sender balance is decreased and receiver balance increased in one Firestore transaction.
 - Customer transaction history shows sent, received and deposit records.
 - Admin can increase/decrease an approved account balance; each adjustment is logged.
+
+## Latest MPS features
+- Transfer confirmation before sending
+- Customer change-MPIN flow
+- Admin-issued demo virtual card details
+- Real PDF account statement download via jsPDF CDN
+- Unique MPS transaction IDs for new transfers
+
+Virtual card details are demo-only and should never be used as real payment-card data.

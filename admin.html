@@ -7,7 +7,7 @@
 </div>
 <div class="field"><label>Reason</label><input id="adjReason" maxlength="100" placeholder="Admin adjustment"></div>
 <button class="btn btn-blue" id="adjustBtn">Adjust Balance</button><div id="adjMsg"></div>
-</div><br><div class="card"><h3>Approved Accounts</h3><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Account</th><th>MBS No.</th><th>Balance</th><th>Actions</th></tr></thead><tbody id="accountRows"></tbody></table></div></div></div></main><footer class="footer">MBS Admin</footer>
+</div><br><div class="card"><h3>💳 Issue / Update Virtual Card</h3><p class="muted">Enter the virtual card details manually for the selected customer. These are demo card details only.</p><div class="two"><div class="field"><label>MATS Number</label><input id="cardMats" maxlength="4" inputmode="numeric" placeholder="4821"></div><div class="field"><label>Card Number</label><input id="cardNumber" maxlength="19" placeholder="5555 5555 5555 5555"></div></div><div class="two"><div class="field"><label>Expiry</label><input id="cardExpiry" maxlength="5" placeholder="12/30"></div><div class="field"><label>CVV</label><input id="cardCvv" maxlength="4" inputmode="numeric" placeholder="123"></div></div><div class="field"><label>Card Holder Name</label><input id="cardName" maxlength="60" placeholder="Customer name"></div><button class="btn btn-blue" id="saveCard">Save Virtual Card</button><div id="cardMsg"></div></div><br><div class="card"><h3>Approved Accounts</h3><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Account</th><th>MBS No.</th><th>Balance</th><th>Actions</th></tr></thead><tbody id="accountRows"></tbody></table></div></div></div></main><footer class="footer">MBS Admin</footer>
 <script type="module">
 import {db,collection,getDocs,setDoc,doc,deleteDoc,runTransaction,query,where,serverTimestamp} from "./firebase.js";
 import {money,esc} from "./app.js";
@@ -30,6 +30,7 @@ const adjAmountEl=document.getElementById("adjAmount");
 const adjReasonEl=document.getElementById("adjReason");
 const adjustBtnEl=document.getElementById("adjustBtn");
 const adjMsgEl=document.getElementById("adjMsg");
+const cardMatsEl=document.getElementById("cardMats"),cardNumberEl=document.getElementById("cardNumber"),cardExpiryEl=document.getElementById("cardExpiry"),cardCvvEl=document.getElementById("cardCvv"),cardNameEl=document.getElementById("cardName"),saveCardEl=document.getElementById("saveCard"),cardMsgEl=document.getElementById("cardMsg");
 
 adminLoginEl.addEventListener("click",()=>{
   if(auEl.value===ADMIN_USER && apEl.value===ADMIN_PASS){
@@ -88,9 +89,10 @@ adjustBtnEl.addEventListener("click",async()=>{
       const ref=doc(db,"accounts",id), snap=await tx.get(ref); if(!snap.exists())throw new Error("missing");
       const old=Number(snap.data().balance||0), next=old+amount; if(next<0)throw new Error("negative");
       tx.update(ref,{balance:next});
-      const tr=doc(collection(db,"transactions")); tx.set(tr,{type:"Admin Adjustment",accountId:id,matsNumber:mats,amount,reason,createdAt:serverTimestamp()});
+      const tr=doc(collection(db,"transactions")); tx.set(tr,{transactionId:`ADM${Date.now()}${Math.floor(1000+Math.random()*9000)}`,type:"Admin Adjustment",accountId:id,matsNumber:mats,amount,reason,createdAt:serverTimestamp()});
     });
     adjMsgEl.innerHTML='<div class="notice success">Balance adjusted successfully.</div>'; adjAmountEl.value=""; adjReasonEl.value=""; await load();
   }catch(e){adjMsgEl.innerHTML='<div class="notice danger">'+(e.message==="negative"?"Balance cannot become negative.":"Adjustment failed. Check Firestore rules.")+'</div>';console.error(e);}
 });
+saveCardEl.addEventListener("click",async()=>{const mats=cardMatsEl.value.trim(),number=cardNumberEl.value.trim(),expiry=cardExpiryEl.value.trim(),cvv=cardCvvEl.value.trim(),name=cardNameEl.value.trim();if(!/^\d{4}$/.test(mats)||!number||!expiry||!cvv||!name){cardMsgEl.innerHTML='<div class="notice danger">Fill all virtual card details correctly.</div>';return}try{const s=await getDocs(query(collection(db,"accounts"),where("matsNumber","==",mats)));if(s.empty){cardMsgEl.innerHTML='<div class="notice danger">Account not found.</div>';return}await setDoc(doc(db,"accounts",s.docs[0].id),{virtualCard:{number,expiry,cvv,name,updatedAt:new Date().toISOString()}},{merge:true});cardMsgEl.innerHTML='<div class="notice success">Virtual card details saved.</div>';cardNumberEl.value='';cardExpiryEl.value='';cardCvvEl.value='';cardNameEl.value='';await load()}catch(e){cardMsgEl.innerHTML='<div class="notice danger">Could not save card: '+esc(e?.code||e?.message||"Firebase error")+'</div>'}});
 </script></body></html>
