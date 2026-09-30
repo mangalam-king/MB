@@ -38,82 +38,130 @@ function render(){
       <div class="field"><label>Note (optional)</label><input id="note" maxlength="80" placeholder="Payment note"></div>
       <button class="btn btn-blue" id="sendBtn">Send Money</button><div id="sendMsg"></div>
     </div>
-    <div class="card"><h3>💰 Add Deposit</h3>
-      <p class="muted">Record a demo deposit through MPS.</p>
-      <div class="field"><label>Amount</label><select id="depositAmount"><option value="10">₹10</option><option value="20">₹20</option><option value="50">₹50</option><option value="100">₹100</option></select></div>
-      <button class="btn btn-green" id="depositBtn">Add Money</button><div id="depMsg"></div>
-    </div>
     <div class="card"><h3>🔐 Payment Safety</h3><p class="muted">Transfers are processed as one Firestore transaction: the sender is debited and the receiver is credited together.</p><p class="small">Never use real bank credentials or real money with this demo.</p></div>
   </div>
   <br><div class="card"><h3>Transaction History</h3><div class="table-wrap"><table class="table">
   <thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Amount</th></tr></thead><tbody id="history"></tbody></table></div></div>`;
   const sendBtnEl=document.getElementById("sendBtn");
-  const depositBtnEl=document.getElementById("depositBtn");
-  sendBtnEl.onclick=sendMoney; depositBtnEl.onclick=deposit; logoutLink.onclick=e=>{e.preventDefault();logout()};
+  sendBtnEl.onclick=sendMoney; logoutLink.onclick=e=>{e.preventDefault();logout()};
 }
 async function sendMoney(){
   const receiverEl=document.getElementById("receiver");
   const sendAmountEl=document.getElementById("sendAmount");
   const noteEl=document.getElementById("note");
   const sendMsgEl=document.getElementById("sendMsg");
-  const mats=receiverEl.value.trim(), amount=Number(sendAmountEl.value), memo=noteEl.value.trim();
-  sendMsgEl.textContent="Processing…";
+  const sendBtnEl=document.getElementById("sendBtn");
+  const mats=receiverEl.value.trim();
+  const amount=Math.round(Number(sendAmountEl.value)*100)/100;
+  const memo=noteEl.value.trim();
+
   if(!/^\d{4}$/.test(mats)){sendMsgEl.innerHTML='<div class="notice danger">Enter a valid 4-digit receiver MATS Number.</div>';return}
-  if(!Number.isFinite(amount)||amount<=0){sendMsgEl.innerHTML='<div class="notice danger">Enter a valid amount.</div>';return}
+  if(!Number.isFinite(amount)||amount<=0){sendMsgEl.innerHTML='<div class="notice danger">Enter a valid amount greater than ₹0.</div>';return}
   if(amount>Number(u.balance||0)){sendMsgEl.innerHTML='<div class="notice danger">Insufficient balance.</div>';return}
-  if(mats===u.matsNumber){sendMsgEl.innerHTML='<div class="notice danger">You cannot send money to your own account.</div>';return}
+  if(mats===String(u.matsNumber)){sendMsgEl.innerHTML='<div class="notice danger">You cannot send money to your own account.</div>';return}
+
+  sendBtnEl.disabled=true;
+  sendBtnEl.textContent="Sending…";
+  sendMsgEl.innerHTML='<div class="notice">Finding receiver…</div>';
+
   try{
+    // Find the receiver first. Only approved accounts can receive MPS transfers.
     const qs=query(collection(db,"accounts"),where("matsNumber","==",mats));
     const rs=await getDocs(qs);
-    if(rs.empty){sendMsgEl.innerHTML='<div class="notice danger">Receiver account not found.</div>';return}
-    const rdoc=rs.docs[0], r={id:rdoc.id,...rdoc.data()};
-    if(r.status!=="Approved"){sendMsgEl.innerHTML='<div class="notice danger">Receiver is not an approved account.</div>';return}
-    await runTransaction(db, async tx=>{
-      const senderRef=doc(db,"accounts",u.id), receiverRef=doc(db,"accounts",r.id);
-      const senderSnap=await tx.get(senderRef), receiverSnap=await tx.get(receiverRef);
-      if(!senderSnap.exists()||!receiverSnap.exists()) throw new Error("Account missing");
-      const sb=Number(senderSnap.data().balance||0);
-      const rb=Number(receiverSnap.data().balance||0);
-      if(sb<amount) throw new Error("INSUFFICIENT");
-      tx.update(senderRef,{balance:sb-amount});
-      tx.update(receiverRef,{balance:rb+amount});
-      const txRef=doc(collection(db,"transactions"));
-      tx.set(txRef,{type:"Transfer",fromAccountId:u.id,fromMatsNumber:u.matsNumber,fromName:u.name,toAccountId:r.id,toMatsNumber:r.matsNumber,toName:r.name,amount,note:memo,createdAt:serverTimestamp()});
-    });
-    sendMsgEl.innerHTML='<div class="notice success">Payment sent successfully to MATS '+esc(mats)+'.</div>';
-    sendAmountEl.value="";receiverEl.value="";noteEl.value="";
-    await load();
-  }catch(e){console.error(e);sendMsgEl.innerHTML='<div class="notice danger">'+(e.message==="INSUFFICIENT"?"Insufficient balance.":"Payment failed. Check Firestore rules.")+'</div>'}
-}
-async function deposit(){
-  const depositAmountEl=document.getElementById("depositAmount");
-  const depMsgEl=document.getElementById("depMsg");
-  const amount=Number(depositAmountEl.value);depMsgEl.textContent="Processing…";
-  try{
+    if(rs.empty) throw new Error("RECEIVER_NOT_FOUND");
+    if(rs.size>1) throw new Error("DUPLICATE_MATS");
+
+    const rdoc=rs.docs[0];
+    const receiverId=rdoc.id;
+    const receiverData=rdoc.data();
+    if(receiverId===u.id) throw new Error("SELF_TRANSFER");
+    if(receiverData.status!=="Approved") throw new Error("RECEIVER_NOT_APPROVED");
+
+    sendMsgEl.innerHTML='<div class="notice">Processing secure transfer…</div>';
+
     await runTransaction(db,async tx=>{
-      const ref=doc(db,"accounts",u.id), snap=await tx.get(ref);
-      if(!snap.exists())throw new Error("Account missing");
-      const b=Number(snap.data().balance||0);
-      tx.update(ref,{balance:b+amount});
-      const tr=doc(collection(db,"transactions"));
-      tx.set(tr,{type:"Deposit",accountId:u.id,matsNumber:u.matsNumber,amount,source:"MPS demo deposit",createdAt:serverTimestamp()});
+      // IMPORTANT: all reads happen before any write. This keeps the transfer atomic.
+      const senderRef=doc(db,"accounts",u.id);
+      const receiverRef=doc(db,"accounts",receiverId);
+      const senderSnap=await tx.get(senderRef);
+      const receiverSnap=await tx.get(receiverRef);
+
+      if(!senderSnap.exists()) throw new Error("SENDER_MISSING");
+      if(!receiverSnap.exists()) throw new Error("RECEIVER_MISSING");
+
+      const sender=senderSnap.data();
+      const receiver=receiverSnap.data();
+      const senderBalance=Number(sender.balance||0);
+      const receiverBalance=Number(receiver.balance||0);
+
+      if(sender.status!=="Approved") throw new Error("SENDER_NOT_APPROVED");
+      if(receiver.status!=="Approved") throw new Error("RECEIVER_NOT_APPROVED");
+      if(!Number.isFinite(senderBalance)||senderBalance<amount) throw new Error("INSUFFICIENT");
+
+      tx.update(senderRef,{balance:senderBalance-amount});
+      tx.update(receiverRef,{balance:receiverBalance+amount});
+
+      const transferRef=doc(collection(db,"transactions"));
+      tx.set(transferRef,{
+        type:"Transfer",
+        fromAccountId:u.id,
+        fromMatsNumber:String(sender.matsNumber||u.matsNumber),
+        fromName:String(sender.name||u.name),
+        toAccountId:receiverId,
+        toMatsNumber:String(receiver.matsNumber||mats),
+        toName:String(receiver.name||""),
+        amount:amount,
+        note:memo,
+        createdAt:serverTimestamp()
+      });
     });
-    depMsgEl.innerHTML='<div class="notice success">₹'+amount.toFixed(2)+' added successfully.</div>';
+
+    sendMsgEl.innerHTML='<div class="notice success">₹'+amount.toFixed(2)+' sent successfully to MATS '+esc(mats)+'.</div>';
+    sendAmountEl.value=""; receiverEl.value=""; noteEl.value="";
     await load();
-  }catch(e){depMsgEl.innerHTML='<div class="notice danger">Could not add money.</div>'}
+  }catch(e){
+    console.error("MPS transfer error:",e);
+    const messages={
+      RECEIVER_NOT_FOUND:"Receiver account was not found. Check the 4-digit MATS Number.",
+      DUPLICATE_MATS:"This MATS Number is assigned to more than one account. Ask the admin to fix the duplicate.",
+      SELF_TRANSFER:"You cannot send money to your own account.",
+      RECEIVER_NOT_APPROVED:"Receiver account is not approved yet.",
+      SENDER_MISSING:"Your account could not be found.",
+      RECEIVER_MISSING:"Receiver account could not be found.",
+      SENDER_NOT_APPROVED:"Your account is not approved for transfers.",
+      INSUFFICIENT:"Insufficient balance.",
+      "permission-denied":"Firebase permission denied. Publish the Firestore rules from the project ZIP.",
+      "failed-precondition":"Firestore could not complete the transaction. Make sure Cloud Firestore is enabled.",
+      "aborted":"The transfer was retried because the account changed. Please try again."
+    };
+    const key=e?.code||e?.message||"";
+    const msg=messages[key] || (e?.code?"Transfer failed ("+esc(e.code)+").":"Transfer failed. Please try again.");
+    sendMsgEl.innerHTML='<div class="notice danger">'+msg+'</div>';
+  }finally{
+    sendBtnEl.disabled=false;
+    sendBtnEl.textContent="Send Money";
+  }
 }
 async function loadHistory(){
   try{
-    const q=query(collection(db,"transactions"),where("accountId","==",u.id));
-    const s=await getDocs(q);
-    const arr=s.docs.map(x=>({id:x.id,...x.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    document.getElementById("history").innerHTML=arr.map(t=>{
+    // Transfer records use fromAccountId/toAccountId, while admin adjustments use accountId.
+    // Load the demo transaction collection and filter records belonging to this customer.
+    const s=await getDocs(collection(db,"transactions"));
+    const arr=s.docs.map(x=>({id:x.id,...x.data()})).filter(t=>
+      t.accountId===u.id || t.fromAccountId===u.id || t.toAccountId===u.id
+    ).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+
+    const historyEl=document.getElementById("history");
+    historyEl.innerHTML=arr.map(t=>{
       const outgoing=t.type==="Transfer"&&t.fromAccountId===u.id;
       const incoming=t.type==="Transfer"&&t.toAccountId===u.id;
-      const label=outgoing?"Sent to "+esc(t.toMatsNumber):incoming?"Received from "+esc(t.fromMatsNumber):"Deposit";
-      const sign=outgoing?"−":incoming?"+":"+";
-      return `<tr><td>${t.createdAt?.toDate?t.createdAt.toDate().toLocaleString():"Just now"}</td><td>${esc(t.type)}</td><td>${label}${t.note?" · "+esc(t.note):""}</td><td><b>${sign}${money(t.amount)}</b></td></tr>`;
+      const label=outgoing?"Sent to "+esc(t.toMatsNumber):incoming?"Received from "+esc(t.fromMatsNumber):t.type==="Admin Adjustment"?"Admin balance adjustment":"Transaction";
+      const sign=outgoing?"−":incoming?"+":t.type==="Admin Adjustment"?(Number(t.amount||0)>=0?"+":"−"):"";
+      return `<tr><td>${t.createdAt?.toDate?t.createdAt.toDate().toLocaleString():"Just now"}</td><td>${esc(t.type||"Transaction")}</td><td>${label}${t.note?" · "+esc(t.note):t.reason?" · "+esc(t.reason):""}</td><td><b>${sign}${money(Math.abs(Number(t.amount||0)))}</b></td></tr>`;
     }).join("")||'<tr><td colspan="4">No transactions yet.</td></tr>';
-  }catch(e){document.getElementById("history").innerHTML='<tr><td colspan="4">Transaction history unavailable.</td></tr>'}
+  }catch(e){
+    console.error("Transaction history error:",e);
+    document.getElementById("history").innerHTML='<tr><td colspan="4">Transaction history unavailable.</td></tr>';
+  }
 }
 </script></body></html>
