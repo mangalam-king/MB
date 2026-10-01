@@ -1,23 +1,38 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customer Login — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a></nav></header><main class="container"><div class="section-title"><h2>Customer Login</h2><p class="muted">Use your MBS Number.</p></div><form id="loginForm" class="card form"><div class="field"><label>MBS Number</label><input id="mats" maxlength="4" inputmode="numeric" placeholder="e.g. 4821" required></div><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" required></div><button class="btn btn-blue" type="submit">Login</button><div id="msg"></div></form></main><footer class="footer">MBS — Mats Banks</footer>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customer Login — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a></nav></header><main class="container"><div class="section-title"><h2>Customer Login</h2><p class="muted">Use your MBS Number.</p></div><form id="loginForm" class="card form"><div class="field"><label>MBS Number</label><input id="mats" maxlength="4" inputmode="numeric" placeholder="e.g. 4821" required></div><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" required></div><div id="mpinArea"></div><button class="btn btn-blue" id="loginBtn" type="submit">Continue</button><div id="msg"></div></form></main><footer class="footer">MBS — Mats Banks</footer>
 <script type="module">
-import {db,collection,getDocs,query,where} from "./firebase.js";
+import {db,collection,getDocs,query,where,updateDoc,doc} from "./firebase.js";
 import {setUser} from "./app.js";
-const form=document.getElementById("loginForm");
-const msg=document.getElementById("msg");
-const mats=document.getElementById("mats");
-const mobile=document.getElementById("mobile");
-form.addEventListener("submit",async e=>{
- e.preventDefault(); msg.innerHTML="Checking…";
- try{
-  const q=query(collection(db,"accounts"),where("matsNumber","==",mats.value.trim()),where("mobile","==",mobile.value.trim()));
-  const s=await getDocs(q);
-  if(s.empty){msg.innerHTML='<div class="notice danger">Account not found or not approved.</div>';return}
-  const d={id:s.docs[0].id,...s.docs[0].data()};
-  if(d.status!=="Approved"){msg.innerHTML='<div class="notice danger">Your account is not approved yet.</div>';return}
-  setUser(d); location.href="dashboard.html";
- }catch(err){
-  console.error(err);
-  msg.innerHTML='<div class="notice danger">Login failed: '+(err?.code||"Firebase error")+'. Check Firestore rules and configuration.</div>';
+const form=document.getElementById("loginForm"),msg=document.getElementById("msg"),mats=document.getElementById("mats"),mobile=document.getElementById("mobile"),mpinArea=document.getElementById("mpinArea"),loginBtn=document.getElementById("loginBtn");
+let account=null;
+function validPin(v){return /^\d{4}$/.test(v)}
+async function hashMPIN(v){const data=new TextEncoder().encode(v);const hash=await crypto.subtle.digest("SHA-256",data);return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("")}
+function renderMPIN(){
+ if(!account)return;
+ if(account.mpinHash){
+  mpinArea.innerHTML='<div class="field"><label>MPIN</label><input id="mpin" type="password" maxlength="4" inputmode="numeric" placeholder="Enter 4-digit MPIN" required></div><p class="muted small">Enter your MPIN to complete login.</p>';
+  loginBtn.textContent="Login";
+ }else{
+  mpinArea.innerHTML='<div class="notice">🔐 First login: set your 4-digit MPIN. You will need this MPIN for future logins.</div><div class="field"><label>Set MPIN</label><input id="mpin" type="password" maxlength="4" inputmode="numeric" placeholder="4 digits" required></div><div class="field"><label>Confirm MPIN</label><input id="mpinConfirm" type="password" maxlength="4" inputmode="numeric" placeholder="Repeat MPIN" required></div>';
+  loginBtn.textContent="Set MPIN & Login";
  }
-});
+}
+async function findAccount(){
+ const matsVal=mats.value.trim(), mobileVal=mobile.value.trim();
+ if(!/^\d{4}$/.test(matsVal)||!mobileVal){msg.innerHTML='<div class="notice danger">Enter your 4-digit MBS Number and mobile number.</div>';return false}
+ msg.innerHTML="Checking account…";
+ const q=query(collection(db,"accounts"),where("matsNumber","==",matsVal),where("mobile","==",mobileVal));
+ const s=await getDocs(q);
+ if(s.empty){msg.innerHTML='<div class="notice danger">Account not found or not approved.</div>';return false}
+ const d={id:s.docs[0].id,...s.docs[0].data()};
+ if(d.status!=="Approved"){msg.innerHTML='<div class="notice danger">Your account is not approved yet.</div>';return false}
+ account=d; renderMPIN(); msg.innerHTML='<div class="notice success">Account verified. Continue with MPIN.</div>'; return true;
+}
+form.addEventListener("submit",async e=>{e.preventDefault();try{
+ if(!account){await findAccount();return}
+ const pin=document.getElementById("mpin")?.value||"";
+ if(!validPin(pin)){msg.innerHTML='<div class="notice danger">MPIN must be exactly 4 digits.</div>';return}
+ if(account.mpinHash){const h=await hashMPIN(pin);if(h!==account.mpinHash){msg.innerHTML='<div class="notice danger">Incorrect MPIN.</div>';return}}
+ else{const c=document.getElementById("mpinConfirm")?.value||"";if(pin!==c){msg.innerHTML='<div class="notice danger">MPINs do not match.</div>';return}const h=await hashMPIN(pin);await updateDoc(doc(db,"accounts",account.id),{mpinHash:h,mpinSetAt:new Date().toISOString()});account.mpinHash=h;}
+ setUser(account);location.href="dashboard.html";
+}catch(err){console.error(err);msg.innerHTML='<div class="notice danger">Login failed: '+(err?.code||err?.message||"Firebase error")+'.</div>';}});
 </script></body></html>
