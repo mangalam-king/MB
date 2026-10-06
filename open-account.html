@@ -1,59 +1,130 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Account — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a><div class="navlinks"><a href="index.html">Home</a><a href="login.html">Login</a></div></nav></header>
 <main class="container"><div class="section-title"><h2>Open an MBS Account</h2><p class="muted">Fill in the details below.</p></div><form id="accountForm" class="card form">
 <div class="two"><div class="field"><label>Full Name</label><input id="name" required></div><div class="field"><label>Date of Birth</label><input id="dob" type="date" required></div></div>
-<div class="two"><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" required></div><div class="field"><label>Email</label><input id="email" type="email"></div></div>
+<div class="two"><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" inputmode="numeric" placeholder="10-digit mobile number" required><button class="btn btn-blue" id="sendOtpBtn" type="button" style="margin-top:8px">📱 Send OTP</button><div id="recaptcha-container"></div><div id="otpArea" style="display:none;margin-top:10px"><input id="otp" type="text" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit OTP"><button class="btn btn-blue" id="verifyOtpBtn" type="button" style="margin-top:8px">Verify OTP</button><div id="otpMsg" style="margin-top:8px"></div></div><div id="phoneStatus" style="margin-top:8px"></div></div><div class="field"><label>Email</label><input id="email" type="email"></div></div>
 <div class="field"><label>Account Type</label><select id="type"><option>Savings</option><option>Minor Savings</option></select></div>
 <div class="field"><label>Address</label><textarea id="address" required></textarea></div>
 <div class="field"><label>Parent/Guardian Name (if applicable)</label><input id="guardian"></div>
 <div class="field"><label>Initial Deposit</label><select id="deposit"><option value="10">₹10</option><option value="20">₹20</option><option value="50">₹50</option><option value="0">No initial deposit</option></select></div>
 <div class="notice">MBS Number will be generated automatically. Your 9-digit account number will be assigned by the MBS admin after approval. PAN/Aadhaar is not collected in this demo.</div>
-<button class="btn btn-blue" type="submit">Submit Application</button><div id="msg"></div></form></main>
+<button class="btn btn-blue" id="submitBtn" type="submit" disabled>Submit Application</button><div id="msg"></div></form></main>
 <footer class="footer">MBS — Mats Banks</footer>
 <script type="module">
-import {db,collection,addDoc,serverTimestamp} from "./firebase.js";
+import {db,auth,RecaptchaVerifier,signInWithPhoneNumber,signOut,collection,addDoc,serverTimestamp} from "./firebase.js";
 import {makeMatsNumber} from "./app.js";
 
 const form=document.getElementById("accountForm");
 const msg=document.getElementById("msg");
+const mobileEl=document.getElementById("mobile");
+const sendOtpBtn=document.getElementById("sendOtpBtn");
+const verifyOtpBtn=document.getElementById("verifyOtpBtn");
+const otpArea=document.getElementById("otpArea");
+const otpEl=document.getElementById("otp");
+const otpMsg=document.getElementById("otpMsg");
+const phoneStatus=document.getElementById("phoneStatus");
+const submitBtn=document.getElementById("submitBtn");
+let confirmationResult=null;
+let phoneVerified=false;
+let verifiedPhone="";
+let recaptchaVerifier=null;
+
+function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));}
+function normalizePhone(v){
+  const raw=String(v||"").replace(/\D/g,"");
+  if(raw.length===10)return "+91"+raw;
+  if(raw.length===12 && raw.startsWith("91"))return "+"+raw;
+  if(String(v||"").trim().startsWith("+"))return "+"+raw;
+  return "";
+}
+function setVerified(ok,phone=""){
+  phoneVerified=ok; verifiedPhone=phone;
+  submitBtn.disabled=!ok;
+  if(ok){
+    phoneStatus.innerHTML='<div class="notice success">✓ Phone number verified successfully.</div>';
+    sendOtpBtn.style.display="none";
+    mobileEl.readOnly=true;
+    otpArea.style.display="none";
+  }else{
+    phoneStatus.innerHTML='<div class="notice">Phone OTP verification is required before submitting.</div>';
+  }
+}
+function ensureRecaptcha(){
+  if(recaptchaVerifier)return recaptchaVerifier;
+  recaptchaVerifier=new RecaptchaVerifier(auth,"recaptcha-container",{size:"normal"});
+  return recaptchaVerifier;
+}
+
+sendOtpBtn.addEventListener("click",async()=>{
+  const phone=normalizePhone(mobileEl.value);
+  if(!phone){phoneStatus.innerHTML='<div class="notice danger">Enter a valid 10-digit Indian mobile number.</div>';return;}
+  if(phoneVerified){return;}
+  otpMsg.textContent="";
+  phoneStatus.innerHTML='<div class="notice">Sending OTP…</div>';
+  sendOtpBtn.disabled=true;
+  try{
+    const verifier=ensureRecaptcha();
+    confirmationResult=await signInWithPhoneNumber(auth,phone,verifier);
+    otpArea.style.display="block";
+    phoneStatus.innerHTML='<div class="notice success">OTP sent to <b>'+esc(phone)+'</b>. Enter the 6-digit code.</div>';
+    sendOtpBtn.textContent="OTP Sent";
+  }catch(err){
+    console.error(err);
+    try{recaptchaVerifier?.clear();}catch(e){}
+    recaptchaVerifier=null;
+    sendOtpBtn.disabled=false;
+    sendOtpBtn.textContent="📱 Send OTP";
+    const detail=err?.message||"Could not send OTP.";
+    phoneStatus.innerHTML='<div class="notice danger"><b>OTP could not be sent.</b><br>'+esc(detail)+'</div>';
+  }
+});
+
+verifyOtpBtn.addEventListener("click",async()=>{
+  const code=otpEl.value.trim();
+  if(!confirmationResult){otpMsg.innerHTML='<div class="notice danger">Please request an OTP first.</div>';return;}
+  if(!/^\d{6}$/.test(code)){otpMsg.innerHTML='<div class="notice danger">Enter the 6-digit OTP.</div>';return;}
+  verifyOtpBtn.disabled=true;
+  otpMsg.textContent="Verifying…";
+  try{
+    await confirmationResult.confirm(code);
+    const phone=normalizePhone(mobileEl.value);
+    setVerified(true,phone);
+    otpMsg.innerHTML='<div class="notice success">Phone verified. You can now submit your account application.</div>';
+  }catch(err){
+    console.error(err);
+    verifyOtpBtn.disabled=false;
+    otpMsg.innerHTML='<div class="notice danger">Invalid or expired OTP. Please try again.</div>';
+  }
+});
+
+mobileEl.addEventListener("input",()=>{
+  if(phoneVerified){
+    phoneVerified=false; verifiedPhone=""; mobileEl.readOnly=false; sendOtpBtn.style.display="inline-block"; sendOtpBtn.disabled=false; sendOtpBtn.textContent="📱 Send OTP"; submitBtn.disabled=true; phoneStatus.innerHTML='<div class="notice danger">Mobile number changed. Please verify the new number.</div>';
+  }
+});
 
 form.addEventListener("submit",async e=>{
   e.preventDefault();
+  if(!phoneVerified){msg.innerHTML='<div class="notice danger">Please verify your phone number with OTP before submitting.</div>';return;}
   msg.innerHTML="<div class=\"notice\">Submitting…</div>";
   const nameEl=document.getElementById("name");
   const dobEl=document.getElementById("dob");
-  const mobileEl=document.getElementById("mobile");
   const emailEl=document.getElementById("email");
   const typeEl=document.getElementById("type");
   const addressEl=document.getElementById("address");
   const guardianEl=document.getElementById("guardian");
   const depositEl=document.getElementById("deposit");
   try{
-    const data={
-      name:nameEl.value.trim(),
-      dob:dobEl.value,
-      mobile:mobileEl.value.trim(),
-      email:emailEl.value.trim(),
-      type:typeEl.value,
-      address:addressEl.value.trim(),
-      guardian:guardianEl.value.trim(),
-      initialDeposit:Number(depositEl.value),
-      matsNumber:makeMatsNumber(),
-      status:"Pending",
-      balance:0,
-      createdAt:serverTimestamp()
-    };
-    if(!data.name||!data.dob||!data.mobile||!data.address){
-      msg.innerHTML='<div class="notice danger">Please fill all required fields.</div>';
-      return;
-    }
+    const data={name:nameEl.value.trim(),dob:dobEl.value,mobile:verifiedPhone,email:emailEl.value.trim(),type:typeEl.value,address:addressEl.value.trim(),guardian:guardianEl.value.trim(),initialDeposit:Number(depositEl.value),matsNumber:makeMatsNumber(),status:"Pending",balance:0,phoneVerified:true,phoneVerifiedAt:new Date().toISOString(),phoneAuthUid:auth.currentUser?.uid||"",createdAt:serverTimestamp()};
+    if(!data.name||!data.dob||!data.mobile||!data.address){msg.innerHTML='<div class="notice danger">Please fill all required fields.</div>';return;}
     await addDoc(collection(db,"accountApplications"),data);
-    msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MATS Number: <b>'+data.matsNumber+'</b>. Admin approval is required. The 9-digit account number will be assigned by the admin.</div>';
-    form.reset();
+    msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MATS Number: <b>'+esc(data.matsNumber)+'</b>. Phone number verified by OTP. Admin approval is required. The 9-digit account number will be assigned by the admin.</div>';
+    form.reset(); setVerified(false); verifiedPhone=""; confirmationResult=null; otpArea.style.display="none"; sendOtpBtn.style.display="inline-block"; sendOtpBtn.disabled=false; sendOtpBtn.textContent="📱 Send OTP";
+    try{await signOut(auth);}catch(e){}
   }catch(err){
     console.error("MBS application error:",err);
-    const code=err?.code||"unknown";
-    const detail=err?.message||"Unknown Firebase error";
-    msg.innerHTML='<div class="notice danger"><b>Could not submit.</b><br>Firebase error: '+code+'<br><span class="small">'+detail.replace(/[<>]/g,"")+'</span><br><br>Make sure Cloud Firestore is created and the current firestore.rules are published.</div>';
+    const code=err?.code||"unknown"; const detail=err?.message||"Unknown Firebase error";
+    msg.innerHTML='<div class="notice danger"><b>Could not submit.</b><br>Firebase error: '+esc(code)+'<br><span class="small">'+esc(detail)+'</span><br><br>Make sure Cloud Firestore is created and the current firestore.rules are published.</div>';
   }
 });
+setVerified(false);
 </script></body></html>
