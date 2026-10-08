@@ -1,7 +1,7 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Account — MBS</title><link rel="stylesheet" href="style.css"></head><body><header class="top"><nav class="nav"><a class="brand" href="index.html"><span class="logo">M</span>MBS</a><div class="navlinks"><a href="index.html">Home</a><a href="login.html">Login</a></div></nav></header>
 <main class="container"><div class="section-title"><h2>Open an MBS Account</h2><p class="muted">Fill in the details below.</p></div><form id="accountForm" class="card form">
 <div class="two"><div class="field"><label>Full Name</label><input id="name" required></div><div class="field"><label>Date of Birth</label><input id="dob" type="date" required></div></div>
-<div class="two"><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" inputmode="numeric" placeholder="10-digit mobile number" required><button class="btn btn-blue" id="sendOtpBtn" type="button" style="margin-top:8px">📱 Send OTP</button><div id="recaptcha-container" style="margin-top:10px"></div><div id="otpArea" style="display:none;margin-top:10px"><input id="otp" type="text" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit OTP"><button class="btn btn-blue" id="verifyOtpBtn" type="button" style="margin-top:8px">Verify OTP</button><div id="otpMsg" style="margin-top:8px"></div></div><div id="phoneStatus" style="margin-top:8px"></div></div><div class="field"><label>Email</label><input id="email" type="email"></div></div>
+<div class="two"><div class="field"><label>Mobile Number</label><input id="mobile" type="tel" inputmode="numeric" placeholder="10-digit mobile number" required><div class="small muted" style="margin-top:6px">Your mobile number is saved with the application. OTP is sent to your email for free verification.</div></div><div class="field"><label>Email</label><input id="email" type="email" required><button class="btn btn-blue" id="sendOtpBtn" type="button" style="margin-top:8px">✉️ Send Email OTP</button><div id="otpArea" style="display:none;margin-top:10px"><input id="otp" type="text" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit OTP"><button class="btn btn-blue" id="verifyOtpBtn" type="button" style="margin-top:8px">Verify OTP</button><div id="otpMsg" style="margin-top:8px"></div></div><div id="emailStatus" style="margin-top:8px"></div></div></div>
 <div class="field"><label>Account Type</label><select id="type"><option>Savings</option><option>Minor Savings</option></select></div>
 <div class="field"><label>Address</label><textarea id="address" required></textarea></div>
 <div class="field"><label>Parent/Guardian Name (if applicable)</label><input id="guardian"></div>
@@ -10,160 +10,111 @@
 <button class="btn btn-blue" id="submitBtn" type="submit" disabled>Submit Application</button><div id="msg"></div></form></main>
 <footer class="footer">MBS — Mats Banks</footer>
 <script type="module">
-import {db,auth,RecaptchaVerifier,signInWithPhoneNumber,signOut,collection,addDoc,serverTimestamp} from "./firebase.js";
+import {db,collection,addDoc,serverTimestamp} from "./firebase.js";
 import {makeMatsNumber} from "./app.js";
+
+// FREE EMAIL OTP CONFIGURATION (EmailJS)
+// Create a free EmailJS account and replace these 3 values.
+const EMAILJS_PUBLIC_KEY="IpFDQSmmraV38mshD";
+const EMAILJS_SERVICE_ID="service_vfezyf6";
+const EMAILJS_TEMPLATE_ID="template_nkt8dvq";
 
 const form=document.getElementById("accountForm");
 const msg=document.getElementById("msg");
 const mobileEl=document.getElementById("mobile");
+const emailEl=document.getElementById("email");
 const sendOtpBtn=document.getElementById("sendOtpBtn");
 const verifyOtpBtn=document.getElementById("verifyOtpBtn");
 const otpArea=document.getElementById("otpArea");
 const otpEl=document.getElementById("otp");
 const otpMsg=document.getElementById("otpMsg");
-const phoneStatus=document.getElementById("phoneStatus");
+const emailStatus=document.getElementById("emailStatus");
 const submitBtn=document.getElementById("submitBtn");
-let confirmationResult=null;
-let phoneVerified=false;
-let verifiedPhone="";
-let windowRecaptchaVerifier=null;
+let emailVerified=false;
+let verifiedEmail="";
+let generatedOtp="";
+let otpExpiresAt=0;
+let sending=false;
 
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));}
-function normalizePhone(v){
-  const raw=String(v||"").replace(/\D/g,"");
-  if(raw.length===10)return "+91"+raw;
-  if(raw.length===12 && raw.startsWith("91"))return "+"+raw;
-  if(String(v||"").trim().startsWith("+"))return "+"+raw;
-  return "";
-}
-function setVerified(ok,phone=""){
-  phoneVerified=ok; verifiedPhone=phone;
+function setVerified(ok,email=""){
+  emailVerified=ok; verifiedEmail=email;
   submitBtn.disabled=!ok;
   if(ok){
-    phoneStatus.innerHTML='<div class="notice success">✓ Phone number verified successfully.</div>';
+    emailStatus.innerHTML='<div class="notice success">✓ Email verified successfully.</div>';
     sendOtpBtn.style.display="none";
-    mobileEl.readOnly=true;
+    emailEl.readOnly=true;
     otpArea.style.display="none";
   }else{
-    phoneStatus.innerHTML='<div class="notice">Phone OTP verification is required before submitting.</div>';
+    emailStatus.innerHTML='<div class="notice">Email OTP verification is required before submitting.</div>';
   }
 }
-
-function getRecaptchaVerifier(){
-  if(!windowRecaptchaVerifier){
-    const container = document.getElementById("recaptcha-container");
-    container.innerHTML = "";
-    windowRecaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
-      size: "normal",
-      callback: (response) => {
-        // reCAPTCHA solved
-      },
-      "expired-callback": () => {
-        phoneStatus.innerHTML = '<div class="notice danger">reCAPTCHA expired. Please try sending OTP again.</div>';
-        resetRecaptcha();
-      }
-    });
-  }
-  return windowRecaptchaVerifier;
-}
-
-function resetRecaptcha(){
-  if(windowRecaptchaVerifier){
-    try{
-      windowRecaptchaVerifier.clear();
-    }catch(e){}
-    windowRecaptchaVerifier = null;
-  }
-  const container = document.getElementById("recaptcha-container");
-  if(container) container.innerHTML = "";
+function makeOtp(){return String(Math.floor(100000+Math.random()*900000));}
+function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);}
+function loadEmailJS(){
+  return new Promise((resolve,reject)=>{
+    if(window.emailjs)return resolve(window.emailjs);
+    const sc=document.createElement("script");
+    sc.src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js";
+    sc.onload=()=>{try{window.emailjs.init({publicKey:EMAILJS_PUBLIC_KEY});resolve(window.emailjs)}catch(e){reject(e)}};
+    sc.onerror=()=>reject(new Error("Could not load the email service."));
+    document.head.appendChild(sc);
+  });
 }
 
 sendOtpBtn.addEventListener("click",async()=>{
-  const phone=normalizePhone(mobileEl.value);
-  if(!phone){
-    phoneStatus.innerHTML='<div class="notice danger">Enter a valid 10-digit Indian mobile number.</div>';
-    return;
+  const email=emailEl.value.trim().toLowerCase();
+  if(!validEmail(email)){emailStatus.innerHTML='<div class="notice danger">Enter a valid email address.</div>';return;}
+  if(emailVerified)return;
+  if(EMAILJS_PUBLIC_KEY.startsWith("YOUR_")||EMAILJS_SERVICE_ID.startsWith("YOUR_")||EMAILJS_TEMPLATE_ID.startsWith("YOUR_")){
+    emailStatus.innerHTML='<div class="notice danger"><b>Email OTP is not configured yet.</b><br>Open-account.html and replace the 3 EmailJS configuration values.</div>';return;
   }
-  if(phoneVerified){return;}
-  
-  otpMsg.textContent="";
-  phoneStatus.innerHTML='<div class="notice">Initializing reCAPTCHA & sending OTP…</div>';
-  sendOtpBtn.disabled=true;
-  
+  if(sending)return;
+  sending=true; sendOtpBtn.disabled=true; otpMsg.textContent="";
+  generatedOtp=makeOtp(); otpExpiresAt=Date.now()+5*60*1000;
+  emailStatus.innerHTML='<div class="notice">Sending OTP to <b>'+esc(email)+'</b>…</div>';
   try{
-    resetRecaptcha();
-    const verifier = getRecaptchaVerifier();
-    confirmationResult = await signInWithPhoneNumber(auth, phone, verifier);
+    const emailjs=await loadEmailJS();
+    await emailjs.send(EMAILJS_SERVICE_ID,EMAILJS_TEMPLATE_ID,{to_email:email,email:email,otp:generatedOtp,verification_code:generatedOtp,name:document.getElementById("name").value.trim()||"MBS Applicant"});
     otpArea.style.display="block";
-    phoneStatus.innerHTML='<div class="notice success">OTP sent to <b>'+esc(phone)+'</b>. Enter the 6-digit code.</div>';
-    sendOtpBtn.textContent="Resend OTP";
-    sendOtpBtn.disabled=false;
+    emailStatus.innerHTML='<div class="notice success">OTP sent to <b>'+esc(email)+'</b>. It expires in 5 minutes.</div>';
+    sendOtpBtn.textContent="OTP Sent";
+    setTimeout(()=>{ if(!emailVerified){sendOtpBtn.disabled=false;sendOtpBtn.textContent="✉️ Resend Email OTP";} },30000);
   }catch(err){
-    console.error("OTP Send Error:", err);
-    resetRecaptcha();
-    sendOtpBtn.disabled=false;
-    sendOtpBtn.textContent="📱 Send OTP";
-    
-    let userMsg = err?.message || "Could not send OTP.";
-    if(err?.code === "auth/invalid-phone-number"){
-      userMsg = "Invalid phone number format.";
-    } else if(err?.code === "auth/captcha-check-failed"){
-      userMsg = "reCAPTCHA verification failed. Please try again.";
-    } else if(err?.code === "auth/unauthorized-domain"){
-      userMsg = "This domain is not authorized in Firebase Console -> Authentication -> Settings -> Authorized domains.";
-    } else if(err?.code === "auth/quota-exceeded"){
-      userMsg = "SMS quota exceeded for this Firebase project. Try test phone numbers or upgrade Firebase plan.";
-    }
-    phoneStatus.innerHTML='<div class="notice danger"><b>OTP sending failed:</b><br>'+esc(userMsg)+'</div>';
-  }
+    console.error(err); generatedOtp=""; otpExpiresAt=0; sendOtpBtn.disabled=false; sendOtpBtn.textContent="✉️ Send Email OTP";
+    emailStatus.innerHTML='<div class="notice danger"><b>Could not send email OTP.</b><br>'+esc(err?.text||err?.message||"Please check your EmailJS configuration.")+'</div>';
+  }finally{sending=false;}
 });
 
-verifyOtpBtn.addEventListener("click",async()=>{
+verifyOtpBtn.addEventListener("click",()=>{
   const code=otpEl.value.trim();
-  if(!confirmationResult){otpMsg.innerHTML='<div class="notice danger">Please request an OTP first.</div>';return;}
+  if(!generatedOtp){otpMsg.innerHTML='<div class="notice danger">Please request an OTP first.</div>';return;}
+  if(Date.now()>otpExpiresAt){otpMsg.innerHTML='<div class="notice danger">OTP expired. Please request a new OTP.</div>';generatedOtp="";return;}
   if(!/^\d{6}$/.test(code)){otpMsg.innerHTML='<div class="notice danger">Enter the 6-digit OTP.</div>';return;}
-  verifyOtpBtn.disabled=true;
-  otpMsg.textContent="Verifying…";
-  try{
-    await confirmationResult.confirm(code);
-    const phone=normalizePhone(mobileEl.value);
-    setVerified(true,phone);
-    otpMsg.innerHTML='<div class="notice success">Phone verified. You can now submit your account application.</div>';
-  }catch(err){
-    console.error(err);
-    verifyOtpBtn.disabled=false;
-    otpMsg.innerHTML='<div class="notice danger">Invalid or expired OTP code. Please try again.</div>';
-  }
+  if(code!==generatedOtp){otpMsg.innerHTML='<div class="notice danger">Incorrect OTP. Please try again.</div>';return;}
+  setVerified(true,emailEl.value.trim().toLowerCase());
+  generatedOtp=""; otpExpiresAt=0;
+  otpMsg.innerHTML='<div class="notice success">Email verified. You can now submit your account application.</div>';
 });
 
-mobileEl.addEventListener("input",()=>{
-  if(phoneVerified){
-    phoneVerified=false; verifiedPhone=""; mobileEl.readOnly=false; sendOtpBtn.style.display="inline-block"; sendOtpBtn.disabled=false; sendOtpBtn.textContent="📱 Send OTP"; submitBtn.disabled=true; phoneStatus.innerHTML='<div class="notice danger">Mobile number changed. Please verify the new number.</div>';
-  }
+emailEl.addEventListener("input",()=>{
+  if(emailVerified){emailVerified=false;verifiedEmail="";emailEl.readOnly=false;sendOtpBtn.style.display="inline-block";sendOtpBtn.disabled=false;sendOtpBtn.textContent="✉️ Send Email OTP";submitBtn.disabled=true;generatedOtp="";otpArea.style.display="none";emailStatus.innerHTML='<div class="notice danger">Email changed. Please verify the new email address.</div>';}
 });
 
 form.addEventListener("submit",async e=>{
   e.preventDefault();
-  if(!phoneVerified){msg.innerHTML='<div class="notice danger">Please verify your phone number with OTP before submitting.</div>';return;}
+  if(!emailVerified){msg.innerHTML='<div class="notice danger">Please verify your email with OTP before submitting.</div>';return;}
   msg.innerHTML="<div class=\"notice\">Submitting…</div>";
-  const nameEl=document.getElementById("name");
-  const dobEl=document.getElementById("dob");
-  const emailEl=document.getElementById("email");
-  const typeEl=document.getElementById("type");
-  const addressEl=document.getElementById("address");
-  const guardianEl=document.getElementById("guardian");
-  const depositEl=document.getElementById("deposit");
+  const nameEl=document.getElementById("name"), dobEl=document.getElementById("dob"), typeEl=document.getElementById("type"), addressEl=document.getElementById("address"), guardianEl=document.getElementById("guardian"), depositEl=document.getElementById("deposit");
   try{
-    const data={name:nameEl.value.trim(),dob:dobEl.value,mobile:verifiedPhone,email:emailEl.value.trim(),type:typeEl.value,address:addressEl.value.trim(),guardian:guardianEl.value.trim(),initialDeposit:Number(depositEl.value),matsNumber:makeMatsNumber(),status:"Pending",balance:0,phoneVerified:true,phoneVerifiedAt:new Date().toISOString(),phoneAuthUid:auth.currentUser?.uid||"",createdAt:serverTimestamp()};
-    if(!data.name||!data.dob||!data.mobile||!data.address){msg.innerHTML='<div class="notice danger">Please fill all required fields.</div>';return;}
+    const data={name:nameEl.value.trim(),dob:dobEl.value,mobile:mobileEl.value.trim(),email:verifiedEmail,type:typeEl.value,address:addressEl.value.trim(),guardian:guardianEl.value.trim(),initialDeposit:Number(depositEl.value),matsNumber:makeMatsNumber(),status:"Pending",balance:0,emailVerified:true,emailVerifiedAt:new Date().toISOString(),createdAt:serverTimestamp()};
+    if(!data.name||!data.dob||!data.mobile||!data.email||!data.address){msg.innerHTML='<div class="notice danger">Please fill all required fields.</div>';return;}
     await addDoc(collection(db,"accountApplications"),data);
-    msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MATS Number: <b>'+esc(data.matsNumber)+'</b>. Phone number verified by OTP. Admin approval is required. The 9-digit account number will be assigned by the admin.</div>';
-    form.reset(); setVerified(false); verifiedPhone=""; confirmationResult=null; otpArea.style.display="none"; sendOtpBtn.style.display="inline-block"; sendOtpBtn.disabled=false; sendOtpBtn.textContent="📱 Send OTP";
-    resetRecaptcha();
-    try{await signOut(auth);}catch(e){}
+    msg.innerHTML='<div class="notice success">Application submitted successfully. Save your MATS Number: <b>'+esc(data.matsNumber)+'</b>. Email verified by OTP. Admin approval is required. The 9-digit account number will be assigned by the admin.</div>';
+    form.reset(); setVerified(false); verifiedEmail=""; generatedOtp=""; otpExpiresAt=0; otpArea.style.display="none"; sendOtpBtn.style.display="inline-block"; sendOtpBtn.disabled=false; sendOtpBtn.textContent="✉️ Send Email OTP";
   }catch(err){
     console.error("MBS application error:",err);
-    const code=err?.code||"unknown"; const detail=err?.message||"Unknown Firebase error";
+    const code=err?.code||"unknown", detail=err?.message||"Unknown Firebase error";
     msg.innerHTML='<div class="notice danger"><b>Could not submit.</b><br>Firebase error: '+esc(code)+'<br><span class="small">'+esc(detail)+'</span><br><br>Make sure Cloud Firestore is created and the current firestore.rules are published.</div>';
   }
 });

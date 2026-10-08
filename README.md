@@ -34,3 +34,7 @@ This project is a demo/educational banking interface and is not a real bank or p
 - Unique MPS transaction IDs for new transfers
 
 Virtual card details are demo-only and should never be used as real payment-card data.
+
+
+### Account Opening OTP
+Account opening now uses free EmailJS email OTP instead of Firebase SMS Phone Authentication. Configure the three EmailJS values in `open-account.html`.
