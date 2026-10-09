@@ -4,5 +4,10 @@ service cloud.firestore {
   match /accountApplications/{id} { allow read, create, update, delete: if true; }
   match /accounts/{id} { allow read, create, update, delete: if true; }
   match /transactions/{id} { allow read, create, update, delete: if true; }
+  // Additional MBS demo features. These permissive rules are NOT production-safe.
+  match /notifications/{id} { allow read, create, update, delete: if true; }
+  match /beneficiaries/{id} { allow read, create, update, delete: if true; }
+  match /scheduledTransfers/{id} { allow read, create, update, delete: if true; }
+  match /serviceRequests/{id} { allow read, create, update, delete: if true; }
  }
 }

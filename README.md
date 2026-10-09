@@ -38,3 +38,14 @@ Virtual card details are demo-only and should never be used as real payment-card
 
 ### Account Opening OTP
 Account opening now uses free EmailJS email OTP instead of Firebase SMS Phone Authentication. Configure the three EmailJS values in `open-account.html`.
+
+## MBS Digital Banking 2.0 additions
+- Premium dashboard summary with sent/received totals and transaction count.
+- Notifications centre with read/unread controls; transfer events create sender/recipient alerts.
+- MPS beneficiary management, ₹10,000 demo per-transfer limit, reference/status fields, searchable history, CSV export and per-transaction printable PDF receipts.
+- Scheduled/recurring transfer requests (saved for review; they do not automatically execute in the background).
+- Account services centre for contact/address updates, nominee details, printable demo account/balance certificates, date-range statements, support requests, freeze requests and closure requests.
+- Admin can review/resolve/reject customer service requests.
+
+### Important limitations
+This is an educational demo. The current Firestore rules are permissive and the app does not use proper Firebase Authentication or trusted server-side authorization. Do not use it for real money, real payment credentials or sensitive personal data. Scheduled transfers are requests only, not automatic transfers. Admin credentials in static HTML are not secure for public deployment.
