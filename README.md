@@ -49,3 +49,10 @@ Account opening now uses free EmailJS email OTP instead of Firebase SMS Phone Au
 
 ### Important limitations
 This is an educational demo. The current Firestore rules are permissive and the app does not use proper Firebase Authentication or trusted server-side authorization. Do not use it for real money, real payment credentials or sensitive personal data. Scheduled transfers are requests only, not automatic transfers. Admin credentials in static HTML are not secure for public deployment.
+
+
+## Latest UI and email-change verification update
+- Refreshed the shared design system with a modern responsive banking-style UI while preserving the existing pages and features.
+- Account Services now sends a 6-digit EmailJS OTP to the new email address before changing the saved email. Codes expire after 5 minutes; the account email is updated only after a matching code is entered.
+- EmailJS settings reuse the configured service/template/public key from the account-opening flow.
+- This is still an educational demo. Browser-generated OTP and permissive Firestore rules are not suitable for real financial accounts or public production security. Use server-side OTP generation and Firebase Authentication/security rules for production.
