@@ -56,3 +56,10 @@ This is an educational demo. The current Firestore rules are permissive and the 
 - Account Services now sends a 6-digit EmailJS OTP to the new email address before changing the saved email. Codes expire after 5 minutes; the account email is updated only after a matching code is entered.
 - EmailJS settings reuse the configured service/template/public key from the account-opening flow.
 - This is still an educational demo. Browser-generated OTP and permissive Firestore rules are not suitable for real financial accounts or public production security. Use server-side OTP generation and Firebase Authentication/security rules for production.
+
+
+### Admin roles (demo)
+- Main admin can create sub-admin logins, reset their passwords, and block/unblock them.
+- Sub-admins can approve account applications, record balance transactions, and issue/update virtual cards.
+- Transactions include an administrator name and username-based reference ID; card updates and approvals record who performed them.
+- Main admin can review audit logs. See `FIREBASE-SETUP.md` for the important security limitation.

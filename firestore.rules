@@ -9,5 +9,8 @@ service cloud.firestore {
   match /beneficiaries/{id} { allow read, create, update, delete: if true; }
   match /scheduledTransfers/{id} { allow read, create, update, delete: if true; }
   match /serviceRequests/{id} { allow read, create, update, delete: if true; }
+  // Demo-only sub-admin credentials and accountability logs. Not production-safe.
+  match /adminUsers/{id} { allow read, create, update, delete: if true; }
+  match /auditLogs/{id} { allow read, create, update, delete: if true; }
  }
 }

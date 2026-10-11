@@ -25,3 +25,9 @@ The page generates a random 6-digit OTP in the browser, sends it to the entered 
 Mobile number is still collected and saved, but OTP verification is performed by email.
 
 This remains a demo/educational banking-style project, not a real banking or payment service.
+
+
+## Sub-admin logins and audit trail (demo)
+The updated admin panel uses the `adminUsers` collection for sub-admin usernames and hashed passwords, and `auditLogs` to record approvals, card updates, balance transactions, and admin access changes. Add the `adminUsers` and `auditLogs` matches from `firestore.rules` when publishing rules. The main demo login is still configured in `admin.html`; replace it before sharing the site.
+
+**Security warning:** the current site does not use Firebase Authentication or server-side role enforcement. Because the included rules are permissive, role-based hiding in the browser can be bypassed. Do not use this version for real money or public production. A real deployment needs Firebase Auth, secure Firestore rules, and trusted server/Cloud Functions authorization for every privileged action.
